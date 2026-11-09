@@ -1,0 +1,17 @@
+groups:
+  - name: local-gis
+    rules:
+      - alert: GISServiceUnavailable
+        expr: probe_success == 0
+        for: 45s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Service unavailable: {{ $labels.instance }}"
+      - alert: MetricsTargetDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scrape failed: {{ $labels.instance }}"

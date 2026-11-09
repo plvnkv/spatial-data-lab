@@ -1,0 +1,43 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+rule_files: [alerts.yaml]
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+scrape_configs:
+  - job_name: stack-metrics
+    static_configs:
+      - targets: ["prometheus:9090", "alertmanager:9093", "loki:3100", "alloy:12345", "blackbox:9115"]
+  - job_name: martin
+    metrics_path: /_/metrics
+    static_configs:
+      - targets: ["martin:3000"]
+  - job_name: gis-http
+    metrics_path: /probe
+    params:
+      module: [http]
+    static_configs:
+      - targets:
+          - http://geonode:8088/
+          - http://geoserver:8080/geoserver/ows?service=WMS&request=GetCapabilities
+          - http://martin:3000/catalog
+          - http://titiler:8000/healthz
+          - http://rustfs:9000/health
+          - http://grafana:3000/api/health
+          - http://loki:3100/ready
+    relabel_configs: &blackbox
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+  - job_name: gis-tcp
+    metrics_path: /probe
+    params:
+      module: [tcp]
+    static_configs:
+      - targets: ["db:5432", "rabbitmq:5672"]
+    relabel_configs: *blackbox

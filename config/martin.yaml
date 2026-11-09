@@ -1,0 +1,12 @@
+listen_addresses: 0.0.0.0:3000
+web_ui: enableforall
+postgres:
+  connection_string: ${MARTIN_DATABASE_URL}
+  auto_publish:
+    from_schemas: public
+pmtiles:
+  endpoint: http://rustfs:9000
+  virtual_hosted_style_request: false
+  allow_http: true
+  paths:
+    - s3://vector-tiles/

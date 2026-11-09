@@ -1,0 +1,6 @@
+apiVersion: 1
+providers:
+  - name: Local GIS
+    type: file
+    options:
+      path: /etc/grafana/local-dashboards
