@@ -344,4 +344,4 @@ sudo sh scripts/seed-tiles.sh
 - `New-SdLabTls.ps1` готує TLS-файли. `Copy-SdLabTlsToVm.ps1` передає їх на Ubuntu.
 - `Set-SdLabDnsServer.ps1` додає DNS-записи. `Set-SdLabDnsClient.ps1` налаштовує DNS і довіру до CA на окремому клієнті.
 - `compose.https.yaml`, `django-https.py`, `geonode-nginx.conf`, `nginx-proxy.conf`, `nginx.conf.in` та `index.html.in` застосовуються командами з кроку 6.
-- `setup-ubuntu.sh` і `compose-lan.sh` залишені для наявних інсталяцій, де використовується `/etc/sd-lab/lan.env`. Для ручного розгортання використовуйте команди цього README.
+- `compose-lan.sh` працює з наявними інсталяціями, у яких уже є `/etc/sd-lab/lan.env`. Для нового розгортання виконайте команди з кроку 6.
