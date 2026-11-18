@@ -36,7 +36,7 @@ openssl version
 .\New-SdLabTls.ps1 -OutputDirectory 'C:\TLS'
 ```
 
-Вкажіть новий каталог на NTFS під наявною батьківською текою. Якщо OpenSSL відсутній у `PATH`, додайте `-OpenSslPath` із повним шляхом до `openssl.exe`. Введіть пароль для ключа CA під час створення та повторно під час підпису. Сертифікат сервера діє 365 днів.
+Вкажіть новий каталог на NTFS під наявною батьківською текою. Якщо OpenSSL відсутній у `PATH`, додайте `-OpenSslPath` із повним шляхом до `openssl.exe`. Введіть пароль для ключа CA під час створення та повторно під час підпису. Обидва сертифікати мають `notBefore` о `00:00:00 UTC` у день генерації. Сертифікат сервера діє 365 днів від цього часу. Для VM і Windows Server потрібен правильний системний час.
 
 Скрипт створює три файли PEM:
 
@@ -232,7 +232,20 @@ openssl verify -purpose sslserver -verify_hostname sd.xenon.local \
   -untrusted "$TLS_DIR/fullchain.pem" "$TLS_DIR/fullchain.pem"
 ```
 
-Перевірка сертифіката має повернути `OK`. Завантажте образи окремо від запуску, щоб бачити, на якому образі виникає помилка:
+Перевірка сертифіката має повернути `OK`. Якщо OpenSSL показує `error 9 at 1 depth lookup: certificate is not yet valid`, дата початку дії сертифіката CA пізніша за поточний час Ubuntu VM. На Ubuntu порівняйте значення в UTC:
+
+```bash
+date -u
+timedatectl status
+openssl x509 -in "$TLS_DIR/root-ca.crt" -noout -subject -dates
+openssl x509 -in "$TLS_DIR/fullchain.pem" -noout -subject -issuer -dates
+```
+
+Якщо годинник VM відстає, увімкніть синхронізацію часу командою `sudo timedatectl set-ntp true`. Якщо час не вирівнявся, перевірте також годинник хоста Multipass і доступ VM до сервера часу. Коли час VM буде правильним, повторіть `openssl verify`.
+
+Якщо час VM правильний, а `notBefore` у майбутньому, перевірте годинник Windows Server командою `[DateTime]::UtcNow` у PowerShell. Якщо CA створили за неправильного часу Windows, синхронізуйте його та випустіть сертифікати заново в новий каталог. Передайте нові файли за кроком 5 і повторіть 6.4. Якщо старий CA вже розгорнуто на клієнтах, додайте довіру до нового CA до заміни сертифіката сервера.
+
+Після успішної перевірки завантажте образи окремо від запуску, щоб бачити, на якому образі виникає помилка:
 
 ```bash
 sudo docker compose -f compose.yaml -f bootstrap/compose.https.yaml pull

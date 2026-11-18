@@ -36,11 +36,31 @@ try {
     try {
         New-Item -ItemType Directory -Path 'ca-private' | Out-Null
         $caKey = 'ca-private/root-ca.key.pem'
+        $validFrom = [DateTime]::UtcNow.Date
+        $dateFormat = "yyyyMMddHHmmss'Z'"
+        $culture = [System.Globalization.CultureInfo]::InvariantCulture
+        $startDate = $validFrom.ToString($dateFormat, $culture)
+        $rootEndDate = $validFrom.AddDays(3650).ToString($dateFormat, $culture)
+        $serverEndDate = $validFrom.AddDays(365).ToString($dateFormat, $culture)
+
+        New-Item -ItemType Directory -Path 'issuance' | Out-Null
+        New-Item -ItemType File -Path 'issuance/index.txt' | Out-Null
+        Invoke-OpenSsl rand -hex 16 | Set-Content -LiteralPath 'issuance/serial' -Encoding Ascii
         @'
 [req]
 distinguished_name = dn
 [dn]
 [ca]
+default_ca = issuer
+[issuer]
+database = issuance/index.txt
+new_certs_dir = issuance
+serial = issuance/serial
+default_md = sha256
+policy = subject_policy
+[subject_policy]
+commonName = supplied
+[root]
 basicConstraints = critical,CA:TRUE,pathlen:0
 keyUsage = critical,keyCertSign,cRLSign
 subjectKeyIdentifier = hash
@@ -55,15 +75,18 @@ subjectAltName = DNS:sd.xenon.local,DNS:*.sd.xenon.local
 
         Write-Host 'Choose and confirm a passphrase for the CA key. Enter it again when signing.'
         Invoke-OpenSsl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -aes-256-cbc -out $caKey
-        Invoke-OpenSsl req -new -x509 -sha256 -days 3650 -key $caKey -subj '/CN=SD LAB Root CA' -config tls.cnf -extensions ca -out root-ca.crt
+        Invoke-OpenSsl req -new -sha256 -key $caKey -subj '/CN=SD LAB Root CA' -config tls.cnf -out issuance/root.csr
+        Invoke-OpenSsl ca -selfsign -batch -notext -config tls.cnf -keyfile $caKey -extensions root `
+            -startdate $startDate -enddate $rootEndDate -in issuance/root.csr -out root-ca.crt
         Invoke-OpenSsl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out privkey.pem
         Invoke-OpenSsl req -new -sha256 -key privkey.pem -subj '/CN=sd.xenon.local' -config tls.cnf -out server.csr
-        $serial = Invoke-OpenSsl rand -hex 16
-        Invoke-OpenSsl x509 -req -sha256 -days 365 -in server.csr -CA root-ca.crt -CAkey $caKey -set_serial "0x$serial" -extfile tls.cnf -extensions server -out fullchain.pem
+        Invoke-OpenSsl ca -batch -notext -config tls.cnf -cert root-ca.crt -keyfile $caKey -extensions server `
+            -startdate $startDate -enddate $serverEndDate -in server.csr -out fullchain.pem
         foreach ($name in 'sd.xenon.local', 'grafana.sd.xenon.local') {
             Invoke-OpenSsl verify -CAfile root-ca.crt -purpose sslserver -verify_hostname $name fullchain.pem | Out-Host
         }
         Remove-Item -LiteralPath 'tls.cnf', 'server.csr'
+        Remove-Item -LiteralPath 'issuance' -Recurse -Force
     } finally {
         Pop-Location
     }
