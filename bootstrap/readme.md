@@ -16,13 +16,19 @@
 
 Якщо VM використовує `systemd-resolved`, задайте `~sd.xenon.local` як DNS-маршрут на інтерфейсі з локальним DNS. Перевірте резолюцію командою `resolvectl query sd.xenon.local`.
 
-Підготуйте Docker Engine, Compose та `.env` за [інструкцією проєкту](../README.md). Сертифікат має покривати `sd.xenon.local` і `*.sd.xenon.local` або всі імена окремо. Дозвольте порти 80 і 443 із LAN через мережевий firewall. З кореня репозиторію виконайте:
+Призначте VM сталу IP-адресу, дозвольте порти 80 і 443 із LAN та завантажте на VM сертифікат і ключ. Сертифікат внутрішнього CA має покривати `sd.xenon.local` і `*.sd.xenon.local` або всі імена окремо.
+
+Після публікації скрипту в гілці `feature/https` виконайте на VM:
 
 ```bash
-sudo ./bootstrap/setup-ubuntu.sh sd.xenon.local 192.168.10.50 /path/fullchain.pem /path/privkey.pem
+( installer=$(mktemp) && trap 'rm -f -- "$installer"' EXIT &&
+  curl -fsSL https://raw.githubusercontent.com/plvnkv/spatial-data-lab/feature/https/bootstrap/deploy-ubuntu.sh -o "$installer" &&
+  sudo bash "$installer" 192.168.10.50 /path/fullchain.pem /path/privkey.pem /path/root-ca.crt )
 ```
 
-Використайте сертифікат внутрішнього CA та передайте останнім аргументом `/path/root-ca.crt` у PEM. Скрипт налаштовує Nginx і запускає Compose з HTTPS-налаштуваннями. Після поновлення сертифіката повторіть ту саму команду. Для керування стеком використовуйте `sudo ./bootstrap/compose-lan.sh ps` або інші команди Compose через цей скрипт.
+Скрипт встановить Docker і Compose, клонує репозиторій у `/opt/spatial-data-lab`, створить `.env` та запустить HTTPS. Для приватного GitHub-репозиторію потрібен попередньо налаштований доступ для завантаження скрипту й клонування від імені root. Повторний запуск зберігає `.env`, томи й версію локального коду.
+
+Для готового checkout використовуйте `sudo ./bootstrap/setup-ubuntu.sh sd.xenon.local IP FULLCHAIN KEY ROOT_CA`. Після поновлення сертифіката повторіть запуск. Для керування стеком використовуйте `sudo /opt/spatial-data-lab/bootstrap/compose-lan.sh ps`.
 
 Якщо переносите наявні дані, спершу зробіть резервну копію. Після переходу замініть попередній origin у GeoNode:
 
