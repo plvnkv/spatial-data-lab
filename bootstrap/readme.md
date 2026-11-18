@@ -27,6 +27,27 @@ multipass exec sd-lab -- systemctl is-active ssh
 
 Очікуваний результат останньої команди — `active`. [Документація Ubuntu щодо OpenSSH](https://ubuntu.com/server/docs/openssh-server/).
 
+### Дозвольте вхідний трафік на Ubuntu VM
+
+Виконайте команди на хості Multipass. Замініть `sd-lab` на назву вашої VM з `multipass list`. У правилах нижче замініть `192.168.10.10` на IP Windows Server, з якого підключатиметеся через SSH, а `192.168.10.0/24` — на підмережу клієнтів SD LAB.
+
+```bash
+multipass exec sd-lab -- sudo apt-get install -y ufw
+multipass exec sd-lab -- sudo ufw allow from 192.168.10.10 to any port 22 proto tcp
+multipass exec sd-lab -- sudo ufw allow from 192.168.10.0/24 to any port 80 proto tcp
+multipass exec sd-lab -- sudo ufw allow from 192.168.10.0/24 to any port 443 proto tcp
+multipass exec sd-lab -- sudo ufw show added
+```
+
+Якщо хост Multipass має іншу IP-адресу, яку бачить VM, додайте окреме правило на порт 22 для цієї адреси. Воно потрібне і для подальших викликів `multipass exec`, які використовують SSH. Щоб дізнатися IP хоста, яку бачить VM, виконайте `multipass exec sd-lab -- printenv SSH_CONNECTION`. Перше поле — адреса джерела з’єднання, якщо команда повернула значення. Перевірте, що потрібні правила SSH додано, перш ніж увімкнути UFW. Якщо UFW уже активний, правила діють одразу.
+
+```bash
+multipass exec sd-lab -- sudo ufw enable
+multipass exec sd-lab -- sudo ufw status numbered
+```
+
+На Windows Server перевірте порт 22 командою `Test-NetConnection 192.168.10.50 -Port 22`. Порти 80 і 443 перевіряйте після запуску Nginx у кроці 6.5. [Документація Ubuntu щодо UFW](https://documentation.ubuntu.com/security/security-features/network/firewall/).
+
 ## 2. Встановіть OpenSSL і створіть TLS-сертифікати на Windows
 
 На Windows Server 2019 встановіть OpenSSL 3.x зі схваленого джерела. Додайте каталог із `openssl.exe` до `PATH`, відкрийте нове вікно PowerShell і з каталогу `bootstrap` виконайте:
