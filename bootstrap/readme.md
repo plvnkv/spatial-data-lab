@@ -1,55 +1,88 @@
-# SD LAB у локальній мережі
+# Розгортання SD LAB у локальній мережі
 
-Домен SD LAB — `sd.xenon.local`. Замініть приклади IP-адрес на свої.
+Домен системи — `sd.xenon.local`. У прикладах Ubuntu VM має адресу `192.168.10.50`, Windows DNS — `192.168.10.10`, а обліковий запис на VM — `ubuntu`. Підставте свої значення.
 
-## 1. DNS на Windows Server 2019
+## 1. Підготуйте Ubuntu VM і TLS-файли
 
-У Windows PowerShell 5.1 від адміністратора запустіть:
+Розгорніть і запустіть Ubuntu Server 26.04 зі сталою IPv4-адресою, увімкніть SSH-сервер і підготуйте користувача з доступом до `sudo`. Дозвольте `22/tcp` із Windows Server, `80/tcp` і `443/tcp` із клієнтської мережі. VM потрібен вихід до GitHub, APT-репозиторіїв і реєстрів контейнерів.
+
+На Windows Server із установленим OpenSSL 3.x виконайте в PowerShell із каталогу `bootstrap`:
+
+```powershell
+.\New-SdLabTls.ps1 -OutputDirectory 'C:\TLS'
+```
+
+Вкажіть новий каталог на NTFS під наявною батьківською текою. Якщо OpenSSL відсутній у `PATH`, додайте `-OpenSslPath` із повним шляхом до `openssl.exe`. Введіть пароль для ключа CA під час створення та повторно під час підпису. Сертифікат сервера діє 365 днів.
+
+Скрипт створює три файли PEM:
+
+| Файл | Вміст |
+|---|---|
+| `fullchain.pem` | Сертифікат сервера та проміжні сертифікати. Сертифікат має покривати `sd.xenon.local` і `*.sd.xenon.local` або всі DNS-імена окремо. |
+| `privkey.pem` | Приватний ключ сертифіката сервера без парольної фрази, щоб Nginx запускався автоматично. |
+| `root-ca.crt` | Публічний кореневий сертифікат внутрішнього CA. |
+
+Створений CA підписує сертифікат сервера напряму, тому `fullchain.pem` містить лише сертифікат сервера. Збережіть зашифрований ключ `ca-private/root-ca.key.pem` і `root-ca.crt` у захищеній резервній копії для майбутнього перевипуску. На VM передавайте лише три файли з таблиці.
+
+## 2. Налаштуйте DNS
+
+На Windows Server 2019 відкрийте Windows PowerShell 5.1 від адміністратора й виконайте з каталогу `bootstrap`:
 
 ```powershell
 .\Set-SdLabDnsServer.ps1 -ZoneName sd.xenon.local -VmAddress 192.168.10.50
 ```
 
-Скрипт встановлює роль DNS за потреби й додає в окрему зону записи для порталу та семи піддоменів. Додайте цей DNS у DHCP для клієнтів і налаштуйте Ubuntu VM користуватися DNS, який бачить цю зону. У мережі з Active Directory виконайте скрипт на чинному DNS або налаштуйте на ньому пересилання для цієї зони.
+Надайте клієнтам доступ до цієї зони через локальний DNS. У мережі з Active Directory створіть зону на чинному DNS або налаштуйте умовне пересилання. На Ubuntu з `systemd-resolved` задайте маршрут `~sd.xenon.local` для інтерфейсу з локальним DNS і перевірте його командою `resolvectl query sd.xenon.local`.
 
-## 2. HTTPS на Ubuntu Server 26.04
+## 3. Передайте сертифікати з Windows Server на Ubuntu
 
-Якщо VM використовує `systemd-resolved`, задайте `~sd.xenon.local` як DNS-маршрут на інтерфейсі з локальним DNS. Перевірте резолюцію командою `resolvectl query sd.xenon.local`.
+Якщо `ssh.exe` і `scp.exe` відсутні, встановіть OpenSSH Client у PowerShell від адміністратора:
 
-Призначте VM сталу IP-адресу, дозвольте порти 80 і 443 із LAN та завантажте на VM сертифікат і ключ. Сертифікат внутрішнього CA має покривати `sd.xenon.local` і `*.sd.xenon.local` або всі імена окремо.
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+```
 
-Після публікації скрипту в гілці `feature/https` виконайте на VM:
+Під час першого підключення через `ssh ubuntu@192.168.10.50` звірте відбиток із результатом `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` у консолі VM, якщо SSH пропонує ключ ED25519. Підключіться від того самого користувача Windows, який запускатиме копіювання. Для автоматичного входу використовуйте SSH-ключ.
+
+```powershell
+.\Copy-SdLabTlsToVm.ps1 -VmHost 192.168.10.50 -SshUser ubuntu `
+  -FullChain 'C:\TLS\fullchain.pem' -PrivateKey 'C:\TLS\privkey.pem' `
+  -RootCA 'C:\TLS\root-ca.crt'
+```
+
+Скрипт копіює файли в окремий приватний каталог у домашній теці користувача Ubuntu й виводить рядок `TLS_DIR=...`. Для SSH на іншому порту додайте `-SshPort`.
+
+## 4. Розгорніть SD LAB на Ubuntu
+
+Увійдіть на VM тим самим користувачем SSH і вставте **точний рядок `TLS_DIR=...`**, який вивів скрипт. Після публікації файлів у гілці `feature/https` виконайте:
 
 ```bash
 ( installer=$(mktemp) && trap 'rm -f -- "$installer"' EXIT &&
   curl -fsSL https://raw.githubusercontent.com/plvnkv/spatial-data-lab/feature/https/bootstrap/deploy-ubuntu.sh -o "$installer" &&
-  sudo bash "$installer" 192.168.10.50 /path/fullchain.pem /path/privkey.pem /path/root-ca.crt )
+  sudo bash "$installer" 192.168.10.50 "$TLS_DIR/fullchain.pem" "$TLS_DIR/privkey.pem" "$TLS_DIR/root-ca.crt" )
 ```
 
-Скрипт встановить Docker і Compose, клонує репозиторій у `/opt/spatial-data-lab`, створить `.env` та запустить HTTPS. Для приватного GitHub-репозиторію потрібен попередньо налаштований доступ для завантаження скрипту й клонування від імені root. Повторний запуск зберігає `.env`, томи й версію локального коду.
+Інсталятор встановить Docker і Compose, клонує репозиторій у `/opt/spatial-data-lab`, згенерує `.env` та запустить HTTPS. Для приватного репозиторію завантажте інсталятор з авторизованого сеансу й забезпечте GitHub-доступ для `git` під `sudo`. Повторний запуск зберігає `.env`, томи й наявну версію коду.
 
-Для готового checkout використовуйте `sudo ./bootstrap/setup-ubuntu.sh sd.xenon.local IP FULLCHAIN KEY ROOT_CA`. Після поновлення сертифіката повторіть запуск. Для керування стеком використовуйте `sudo /opt/spatial-data-lab/bootstrap/compose-lan.sh ps`.
+Для наявного checkout з підготовленим `.env` використовуйте `sudo ./bootstrap/setup-ubuntu.sh sd.xenon.local IP FULLCHAIN KEY ROOT_CA`. Для поновлення TLS повторіть кроки 3–4 із новими файлами. Після успішного розгортання тимчасову копію TLS-файлів у домашній теці VM можна прибрати.
 
-Якщо переносите наявні дані, спершу зробіть резервну копію. Після переходу замініть попередній origin у GeoNode:
+Якщо переносите наявні дані GeoNode, перед розгортанням зробіть резервну копію. Після переходу виконайте команду з фактичним старим origin:
 
 ```bash
-sudo ./bootstrap/compose-lan.sh exec -T django python manage.py migrate_baseurl --force \
+sudo /opt/spatial-data-lab/bootstrap/compose-lan.sh exec -T django python manage.py migrate_baseurl --force \
   --source-address http://localhost:8088 --target-address https://sd.xenon.local
 ```
 
-## 3. DNS на Windows 10, 11 і Server 2019
+## 5. Налаштуйте клієнтів і перевірте доступ
 
-За потреби налаштуйте окремий клієнт у Windows PowerShell від адміністратора:
+Розгорніть кореневий CA на клієнтах через GPO або налаштуйте окрему машину з Windows 10, 11 чи Server 2019 у PowerShell від адміністратора:
 
 ```powershell
 Get-NetAdapter
-.\Set-SdLabDnsClient.ps1 -InterfaceIndex 12 -DnsServer 192.168.10.10 -ZoneName sd.xenon.local
+.\Set-SdLabDnsClient.ps1 -InterfaceIndex 12 -DnsServer 192.168.10.10 `
+  -ZoneName sd.xenon.local -RootCA 'C:\TLS\root-ca.crt'
 ```
 
-Замініть `12` на індекс активного адаптера. Для внутрішнього CA додайте `-RootCA C:\path\root-ca.crt` або розгорніть сертифікат через GPO. Параметр `-Reset` разом з `-InterfaceIndex` повертає DNS від DHCP.
+Підставте індекс активного адаптера. Відкрийте `https://sd.xenon.local/sd-lab/` і перевірте стан сервісів, сертифікат та вхід у GeoNode і GeoServer. Prometheus і Alertmanager відкриті для читання. Grafana потребує облікового запису з роллю Viewer, а консоль RustFS і приватні бакети — облікових даних RustFS.
 
-## 4. Огляд
-
-Відкрийте `https://sd.xenon.local/sd-lab/`. Сторінка показує результати внутрішніх перевірок і містить посилання на всі сервіси. Prometheus і Alertmanager доступні для читання. Для Grafana створіть користувачів із роллю Viewer. У RustFS перевірка стану доступна всім, а консоль і приватні бакети потребують облікових даних.
-
-Для тестових тайлів виконайте `sh scripts/seed-tiles.sh` з кореня репозиторію від користувача з доступом до Docker. Щоб додати інші тайли для LAN, внесіть дозволені джерела в `nginx.conf.in` і повторіть запуск налаштування.
+Стан контейнерів перевіряйте через `sudo /opt/spatial-data-lab/bootstrap/compose-lan.sh ps`. Для тестових тайлів перейдіть у `/opt/spatial-data-lab` і виконайте `sudo sh scripts/seed-tiles.sh`.
