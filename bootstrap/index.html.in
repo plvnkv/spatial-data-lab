@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="uk">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SD LAB</title>
+<h1>SD LAB</h1>
+<ul>
+  <li><a href="/">GeoNode</a> · <a href="/geoserver/web/">GeoServer</a></li>
+  <li><a href="https://martin.@DOMAIN@/">Martin · TileJSON</a></li>
+  <li><a href="https://titiler.@DOMAIN@/healthz">TiTiler · стан</a> · <a href="https://titiler.@DOMAIN@/sample/0/0/0.png">приклад тайла</a></li>
+  <li><a href="https://rustfs.@DOMAIN@/">RustFS · консоль</a> · <a href="https://s3.@DOMAIN@/health">стан S3</a></li>
+  <li><a href="https://grafana.@DOMAIN@/d/local-gis/local-gis">Grafana · огляд системи</a></li>
+  <li><a href="https://prometheus.@DOMAIN@/targets">Prometheus · цілі</a></li>
+  <li><a href="https://alertmanager.@DOMAIN@/">Alertmanager</a></li>
+</ul>
+<h2>Стан сервісів</h2>
+<p id="status" role="status">Завантаження…</p>
+<ul id="probes"></ul>
+<script>
+async function showStatus() {
+  const status = document.querySelector('#status');
+  const probes = document.querySelector('#probes');
+  try {
+    const response = await fetch('/sd-lab/status', {cache: 'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const {data} = await response.json();
+    const entries = data.result.map(({metric, value}) => {
+      const row = document.createElement('li');
+      row.textContent = metric.instance + ' — ' + (value[1] === '1' ? 'працює' : 'недоступний');
+      return row;
+    });
+    probes.replaceChildren(...entries);
+    status.textContent = entries.length ? 'Оновлено ' + new Date().toLocaleTimeString('uk-UA') : 'Метрики ще збираються.';
+  } catch {
+    probes.replaceChildren();
+    status.textContent = 'Стан сервісів тимчасово недоступний.';
+  }
+}
+showStatus();
+setInterval(showStatus, 15000);
+</script>

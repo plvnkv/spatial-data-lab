@@ -1,0 +1,133 @@
+map $http_upgrade $sd_lab_connection {
+    default upgrade;
+    '' close;
+}
+
+map "$request_method:$uri" $sd_lab_prometheus_read {
+    default 0;
+    ~^(GET|HEAD): 1;
+    ~^POST:/api/v1/(query|query_range|series|labels)$ 1;
+}
+
+server {
+    listen @IP@:80 default_server;
+    return 404;
+}
+
+server {
+    listen @IP@:80;
+    server_name @DOMAIN@ martin.@DOMAIN@ titiler.@DOMAIN@ rustfs.@DOMAIN@
+                s3.@DOMAIN@ grafana.@DOMAIN@ prometheus.@DOMAIN@ alertmanager.@DOMAIN@;
+    return 308 https://$host$request_uri;
+}
+
+server {
+    listen @IP@:443 ssl default_server;
+    ssl_reject_handshake on;
+    return 404;
+}
+
+server {
+    listen @IP@:443 ssl;
+    server_name @DOMAIN@;
+    include /etc/nginx/snippets/sd-lab-proxy.conf;
+
+    location = /sd-lab/ {
+        alias /etc/nginx/sd-lab-index.html;
+        default_type text/html;
+    }
+
+    location = /sd-lab/status {
+        limit_except GET { deny all; }
+        set $sd_lab_probe_query "probe_success";
+        proxy_pass http://127.0.0.1:9090/api/v1/query?query=$sd_lab_probe_query;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8088;
+    }
+}
+
+server {
+    listen @IP@:443 ssl;
+    server_name martin.@DOMAIN@;
+    include /etc/nginx/snippets/sd-lab-proxy.conf;
+
+    # Add reviewed source IDs here before exposing their data to the LAN.
+    location ~ "^/(gis_smoke|gis_smoke_archive)(/[0-9]{1,2}/[0-9]{1,10}/[0-9]{1,10})?$" {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:3001;
+    }
+
+    location = / { return 302 /gis_smoke; }
+    location / { return 404; }
+}
+
+server {
+    listen @IP@:443 ssl;
+    server_name titiler.@DOMAIN@;
+    include /etc/nginx/snippets/sd-lab-proxy.conf;
+
+    location = / { return 302 /healthz; }
+    location = /healthz {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8001/healthz;
+    }
+
+    # The upstream query is fixed so callers cannot choose storage paths or remote URLs.
+    location ~ "^/sample/(?<tile_z>[0-9]{1,2})/(?<tile_x>[0-9]{1,10})/(?<tile_y>[0-9]{1,10})\.png$" {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8001/cog/tiles/WebMercatorQuad/$tile_z/$tile_x/$tile_y.png?url=s3%3A%2F%2Fraster-data%2Fgis_smoke.tif;
+    }
+    location / { return 404; }
+}
+
+server {
+    listen @IP@:443 ssl;
+    server_name rustfs.@DOMAIN@;
+    include /etc/nginx/snippets/sd-lab-proxy.conf;
+    location = / { return 302 /rustfs/console/; }
+    location / { proxy_pass http://127.0.0.1:9001; }
+}
+
+server {
+    listen @IP@:443 ssl;
+    server_name s3.@DOMAIN@;
+    include /etc/nginx/snippets/sd-lab-proxy.conf;
+    location ^~ /rustfs/ { return 404; }
+    location / {
+        client_max_body_size 0;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_pass http://127.0.0.1:9000;
+    }
+}
+
+server {
+    listen @IP@:443 ssl;
+    server_name grafana.@DOMAIN@;
+    include /etc/nginx/snippets/sd-lab-proxy.conf;
+    location / { proxy_pass http://127.0.0.1:3000; }
+}
+
+server {
+    listen @IP@:443 ssl;
+    server_name prometheus.@DOMAIN@;
+    include /etc/nginx/snippets/sd-lab-proxy.conf;
+
+    location / {
+        if ($sd_lab_prometheus_read = 0) { return 403; }
+        proxy_pass http://127.0.0.1:9090;
+    }
+}
+
+server {
+    listen @IP@:443 ssl;
+    server_name alertmanager.@DOMAIN@;
+    include /etc/nginx/snippets/sd-lab-proxy.conf;
+
+    location / {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:9093;
+    }
+}
