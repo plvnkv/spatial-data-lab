@@ -7,9 +7,9 @@ x-https-django: &https-django
 
 services:
   db:
-    platform: ${SD_LAB_POSTGIS_PLATFORM:?Run bootstrap/setup-ubuntu.sh}
+    platform: ${SD_LAB_POSTGIS_PLATFORM:?Set SD_LAB_POSTGIS_PLATFORM as described in bootstrap/readme.md}
   init-postgis:
-    platform: ${SD_LAB_POSTGIS_PLATFORM:?Run bootstrap/setup-ubuntu.sh}
+    platform: ${SD_LAB_POSTGIS_PLATFORM:?Set SD_LAB_POSTGIS_PLATFORM as described in bootstrap/readme.md}
   django:
     environment: *https-django
     volumes:
@@ -25,7 +25,7 @@ services:
       - ./bootstrap/geonode-nginx.conf:/etc/nginx/conf.d/default.conf:ro
   geoserver:
     environment:
-      PROXY_BASE_URL: ${SD_LAB_ORIGIN:?Run bootstrap/setup-ubuntu.sh}/geoserver
+      PROXY_BASE_URL: ${SD_LAB_ORIGIN:?Set SD_LAB_ORIGIN as described in bootstrap/readme.md}/geoserver
       JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/sd-lab/cacerts
     volumes:
       - /etc/ssl/certs/java/cacerts:/etc/sd-lab/cacerts:ro

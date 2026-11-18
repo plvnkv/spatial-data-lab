@@ -1,14 +1,38 @@
 # Розгортання SD LAB у локальній мережі
 
-Домен системи — `sd.xenon.local`. У прикладах Ubuntu VM має адресу `192.168.10.50`, Windows DNS — `192.168.10.10`, а обліковий запис на VM — `ubuntu`. Підставте свої значення.
+Домен системи — `sd.xenon.local`. Перед початком запишіть свої значення й підставляйте їх у всіх командах.
 
-## 1. Підготуйте Ubuntu VM і TLS-файли
+| Що підготувати | Приклад | Де знайти |
+|---|---|---|
+| Назва VM | `sd-lab` | Команда `multipass list` на комп’ютері, де запущено Multipass |
+| IP-адреса Ubuntu VM | `192.168.10.50` | Команда `multipass list` або `ip -br -4 addr` усередині VM. Виберіть адресу, доступну з Windows |
+| IP-адреса локального DNS | `192.168.10.10` | Адреса Windows Server, що обслуговує вашу DNS-зону |
+| Користувач Ubuntu | `ubuntu` | Обліковий запис із доступом до `sudo` |
+| Каталог TLS-файлів на Windows | `C:\TLS` | Новий каталог, який створить скрипт |
 
-Розгорніть і запустіть Ubuntu Server 26.04 зі сталою IPv4-адресою, увімкніть SSH-сервер і підготуйте користувача з доступом до `sudo`. Дозвольте `22/tcp` із Windows Server, `80/tcp` і `443/tcp` із клієнтської мережі. VM потрібен вихід до GitHub, APT-репозиторіїв і реєстрів контейнерів.
+Команди PowerShell запускайте на Windows, а Bash — усередині Ubuntu VM. Команди `multipass` запускайте на комп’ютері, де працює Multipass. Скрипти Windows запускайте з каталогу `bootstrap` вашої копії репозиторію. Якщо копії на Windows ще немає, відкрийте на GitHub гілку `feature/https`, виберіть **Code → Download ZIP** і розпакуйте архів.
 
-На Windows Server із установленим OpenSSL 3.x виконайте в PowerShell із каталогу `bootstrap`:
+## 1. Встановіть SSH-сервер на Ubuntu VM
+
+Розгорніть і запустіть Ubuntu Server 26.04 зі сталою IPv4-адресою, доступною з Windows Server. Підготуйте користувача `ubuntu` з доступом до `sudo`. Дозвольте `22/tcp` із Windows Server, `80/tcp` і `443/tcp` із клієнтської мережі. VM потрібен вихід до GitHub, APT-репозиторіїв і реєстрів контейнерів.
+
+На хості Multipass виконайте такі команди. Замініть `sd-lab` на назву своєї VM з `multipass list`.
+
+```text
+multipass exec sd-lab -- sudo apt-get update
+multipass exec sd-lab -- sudo apt-get install -y openssh-server
+multipass exec sd-lab -- sudo systemctl enable --now ssh
+multipass exec sd-lab -- systemctl is-active ssh
+```
+
+Очікуваний результат останньої команди — `active`. [Документація Ubuntu щодо OpenSSH](https://ubuntu.com/server/docs/openssh-server/).
+
+## 2. Встановіть OpenSSL і створіть TLS-сертифікати на Windows
+
+На Windows Server 2019 встановіть OpenSSL 3.x зі схваленого джерела. Додайте каталог із `openssl.exe` до `PATH`, відкрийте нове вікно PowerShell і з каталогу `bootstrap` виконайте:
 
 ```powershell
+openssl version
 .\New-SdLabTls.ps1 -OutputDirectory 'C:\TLS'
 ```
 
@@ -24,7 +48,7 @@
 
 Створений CA підписує сертифікат сервера напряму, тому `fullchain.pem` містить лише сертифікат сервера. Збережіть зашифрований ключ `ca-private/root-ca.key.pem` і `root-ca.crt` у захищеній резервній копії для майбутнього перевипуску. На VM передавайте лише три файли з таблиці.
 
-## 2. Налаштуйте DNS
+## 3. Налаштуйте DNS
 
 На Windows Server 2019 відкрийте Windows PowerShell 5.1 від адміністратора й виконайте з каталогу `bootstrap`:
 
@@ -32,17 +56,59 @@
 .\Set-SdLabDnsServer.ps1 -ZoneName sd.xenon.local -VmAddress 192.168.10.50
 ```
 
-Надайте клієнтам доступ до цієї зони через локальний DNS. У мережі з Active Directory створіть зону на чинному DNS або налаштуйте умовне пересилання. На Ubuntu з `systemd-resolved` задайте маршрут `~sd.xenon.local` для інтерфейсу з локальним DNS і перевірте його командою `resolvectl query sd.xenon.local`.
+Надайте клієнтам доступ до цієї зони через локальний DNS. У мережі з Active Directory створіть зону на чинному DNS або налаштуйте умовне пересилання. На Windows перевірте, що DNS повертає адресу VM:
 
-## 3. Передайте сертифікати з Windows Server на Ubuntu
+```powershell
+Resolve-DnsName sd.xenon.local -Type A -Server 192.168.10.10
+```
 
-Якщо `ssh.exe` і `scp.exe` відсутні, встановіть OpenSSH Client у PowerShell від адміністратора:
+На Ubuntu з `systemd-resolved` виконайте `resolvectl query sd.xenon.local`. Якщо ім’я не знаходиться, налаштуйте на мережевому інтерфейсі локальний DNS і маршрут `~sd.xenon.local`. Для перевірки до наступного перезапуску мережі можна виконати команди нижче. Замініть `ens3` на ім’я інтерфейсу з `ip -br -4 addr`. Команди замінюють поточні DNS-сервери й домени на цьому інтерфейсі. У мережі з наявними DNS-маршрутами внесіть зміни через її адміністратора.
+
+```bash
+sudo resolvectl dns ens3 192.168.10.10
+sudo resolvectl domain ens3 '~sd.xenon.local'
+resolvectl query sd.xenon.local
+```
+
+Для постійної роботи після перезавантаження внесіть ці значення в наявну конфігурацію мережі VM або в налаштування, які надає адміністратор мережі.
+
+## 4. Встановіть SSH-клієнт і налаштуйте вхід за ключем
+
+На Windows Server 2019 у PowerShell від адміністратора встановіть OpenSSH Client, якщо його ще немає:
 
 ```powershell
 Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
 ```
 
-Під час першого підключення через `ssh ubuntu@192.168.10.50` звірте відбиток із результатом `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` у консолі VM, якщо SSH пропонує ключ ED25519. Підключіться від того самого користувача Windows, який запускатиме копіювання. Для автоматичного входу використовуйте SSH-ключ.
+Далі працюйте під обліковим записом Windows, з якого підключатиметеся до VM. Створіть ключ і прийміть запропонований шлях до `id_ed25519`. Якщо ключ із таким іменем уже є, використайте його або збережіть новий під іншим іменем.
+
+```powershell
+ssh-keygen -t ed25519
+```
+
+На хості Multipass додайте публічний ключ до `authorized_keys` користувача `ubuntu`. Приклад нижче для випадку, коли Multipass працює на тому самому Windows Server:
+
+```powershell
+multipass exec sd-lab -- install -d -m 700 /home/ubuntu/.ssh
+multipass exec sd-lab -- touch /home/ubuntu/.ssh/authorized_keys
+multipass exec sd-lab -- chmod 600 /home/ubuntu/.ssh/authorized_keys
+Get-Content -LiteralPath "$env:USERPROFILE\.ssh\id_ed25519.pub" |
+  multipass exec sd-lab -- tee -a /home/ubuntu/.ssh/authorized_keys | Out-Null
+```
+
+Якщо Multipass працює на іншому хості, перенесіть на нього лише файл `id_ed25519.pub` і виконайте там ті самі команди підготовки каталогу. У Bash або zsh передайте ключ командою `cat ./id_ed25519.pub | multipass exec sd-lab -- tee -a /home/ubuntu/.ssh/authorized_keys >/dev/null`. Приватний ключ залишається на Windows Server.
+
+На хості Multipass отримайте відбиток SSH-ключа сервера командою `multipass exec sd-lab -- ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`. Потім підключіться з Windows і перед підтвердженням звірте відбиток ED25519:
+
+```powershell
+ssh ubuntu@192.168.10.50
+```
+
+Після входу команда `whoami` має показати `ubuntu`. Якщо SSH повідомляє про тайм-аут, перевірте з PowerShell доступ до порту командою `Test-NetConnection 192.168.10.50 -Port 22`. Якщо отримали `Permission denied (publickey)`, перевірте користувача, шлях до ключа і запис у `authorized_keys`. Якщо зберегли ключ під іншим іменем, вкажіть його через `ssh -i` або в SSH-конфігурації Windows. [Microsoft Learn про OpenSSH](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse) · [Документація multipass exec](https://canonical.com/multipass/docs/latest/reference/command-line-interface/exec/).
+
+## 5. Передайте TLS-сертифікати на Ubuntu
+
+Вийдіть із SSH-сеансу та виконайте в PowerShell із каталогу `bootstrap`:
 
 ```powershell
 .\Copy-SdLabTlsToVm.ps1 -VmHost 192.168.10.50 -SshUser ubuntu `
@@ -52,28 +118,173 @@ Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
 
 Скрипт копіює файли в окремий приватний каталог у домашній теці користувача Ubuntu й виводить рядок `TLS_DIR=...`. Для SSH на іншому порту додайте `-SshPort`.
 
-## 4. Розгорніть SD LAB на Ubuntu
+## 6. Розгорніть SD LAB на Ubuntu
 
-Увійдіть на VM тим самим користувачем SSH і вставте **точний рядок `TLS_DIR=...`**, який вивів скрипт. Після публікації файлів у гілці `feature/https` виконайте:
+### 6.1. Відкрийте термінал Ubuntu VM
 
-```bash
-( installer=$(mktemp) && trap 'rm -f -- "$installer"' EXIT &&
-  curl -fsSL https://raw.githubusercontent.com/plvnkv/spatial-data-lab/feature/https/bootstrap/deploy-ubuntu.sh -o "$installer" &&
-  sudo bash "$installer" 192.168.10.50 "$TLS_DIR/fullchain.pem" "$TLS_DIR/privkey.pem" "$TLS_DIR/root-ca.crt" )
+З Windows підключіться по SSH. З хоста Multipass можна відкрити той самий термінал через `multipass shell sd-lab`:
+
+```powershell
+ssh ubuntu@192.168.10.50
 ```
 
-Інсталятор встановить Docker і Compose, клонує репозиторій у `/opt/spatial-data-lab`, згенерує `.env` та запустить HTTPS. Для приватного репозиторію завантажте інсталятор з авторизованого сеансу й забезпечте GitHub-доступ для `git` під `sudo`. Повторний запуск зберігає `.env`, томи й наявну версію коду.
-
-Для наявного checkout з підготовленим `.env` використовуйте `sudo ./bootstrap/setup-ubuntu.sh sd.xenon.local IP FULLCHAIN KEY ROOT_CA`. Для поновлення TLS повторіть кроки 3–4 із новими файлами. Після успішного розгортання тимчасову копію TLS-файлів у домашній теці VM можна прибрати.
-
-Якщо переносите наявні дані GeoNode, перед розгортанням зробіть резервну копію. Після переходу виконайте команду з фактичним старим origin:
+Решту команд цього розділу виконуйте в Bash **всередині VM**. Копіюйте по одному рядку або блоку. Команди, що починаються з `if` або містять `<<APT`, вставляйте цілим блоком. Якщо команда завершується помилкою, зупиніться на цьому кроці. Вставте рядок `TLS_DIR=...` з кроку 5 і задайте IP, призначену мережевому інтерфейсу VM:
 
 ```bash
-sudo /opt/spatial-data-lab/bootstrap/compose-lan.sh exec -T django python manage.py migrate_baseurl --force \
+VM_IP=192.168.10.50
+ip -br -4 addr
+ls -l -- "$TLS_DIR"/{fullchain.pem,privkey.pem,root-ca.crt}
+```
+
+### 6.2. Встановіть Docker Engine і Compose
+
+Спочатку встановіть інструменти, потрібні навіть за наявного Docker:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git nano openssl python3
+```
+
+Якщо `sudo docker info` і `sudo docker compose version` уже працюють, перейдіть до клонування. Для чистої Ubuntu 26.04 підключіть офіційний APT-репозиторій Docker. Якщо APT повідомить про конфлікт із наявними пакетами Docker, перевірте їх за [інструкцією Docker](https://docs.docker.com/engine/install/ubuntu/) перед зміною пакетів чи зупинкою чинних контейнерів.
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+. /etc/os-release
+
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<APT
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: ${UBUNTU_CODENAME:-$VERSION_CODENAME}
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+APT
+```
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo docker info
+sudo docker compose version
+```
+
+Якщо Docker не стартує, перевірте журнал через `sudo journalctl -u docker -n 100 --no-pager`.
+
+### 6.3. Клонуйте репозиторій і підготуйте `.env`
+
+Клонуйте гілку `feature/https` під користувачем `ubuntu`. Для приватного репозиторію спочатку налаштуйте GitHub-доступ для цього користувача. Якщо каталог уже містить репозиторій, пропустіть перші дві команди й звірте адресу та гілку через `git remote -v` і `git branch --show-current`.
+
+```bash
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0750 /opt/spatial-data-lab
+git clone --branch feature/https --single-branch https://github.com/plvnkv/spatial-data-lab.git /opt/spatial-data-lab
+cd /opt/spatial-data-lab
+git log -1 --oneline
+```
+
+Під час першого запуску створіть `.env` із шаблону. Блок генерує окреме випадкове значення для кожного `CHANGE_ME` та залишає наявний `.env` на місці:
+
+```bash
+if [ ! -e .env ]; then
+  (umask 077
+   while IFS= read -r line || [ -n "$line" ]; do
+     case "$line" in
+       *=CHANGE_ME)
+         secret=$(openssl rand -hex 24) || exit 1
+         printf '%s=%s\n' "${line%=*}" "$secret"
+         ;;
+       *) printf '%s\n' "$line" ;;
+     esac
+   done < .env.example > .env)
+fi
+chmod 600 .env
+dpkg --print-architecture
+nano .env
+```
+
+У редакторі Nano збережіть зміни через **Ctrl+O**, **Enter**, а потім вийдіть через **Ctrl+X**. Якщо наявний `.env` належить root, використайте `sudoedit .env` і виставте права командою `sudo chmod 600 .env`.
+
+У `.env` додайте або оновіть три рядки. Нижче значення для VM з архітектурою `amd64`:
+
+```dotenv
+SD_LAB_HOST=sd.xenon.local
+SD_LAB_ORIGIN=https://sd.xenon.local
+SD_LAB_POSTGIS_PLATFORM=linux/amd64
+```
+
+Для `arm64` задайте `linux/arm64`. Поточні образи GeoNode й GeoServer у Compose вимагають `linux/amd64`, тому ARM64-VM потребує налаштованої емуляції AMD64. За наявних томів залиште чинні паролі та `SECRET_KEY`. Команда нижче має завершитися без виводу. Якщо вона показує ім’я змінної, вкажіть для неї значення в `.env`:
+
+```bash
+sudo awk -F= '$2 == "CHANGE_ME" {print $1}' .env
+sudo docker compose -f compose.yaml -f bootstrap/compose.https.yaml config -q
+```
+
+### 6.4. Встановіть внутрішній CA та запустіть контейнери
+
+```bash
+sudo apt-get install -y nginx default-jre-headless ca-certificates-java
+sudo install -m 0644 "$TLS_DIR/root-ca.crt" /usr/local/share/ca-certificates/sd-lab-root.crt
+sudo update-ca-certificates
+test -s /etc/ssl/certs/java/cacerts
+openssl verify -purpose sslserver -verify_hostname sd.xenon.local \
+  -untrusted "$TLS_DIR/fullchain.pem" "$TLS_DIR/fullchain.pem"
+```
+
+Перевірка сертифіката має повернути `OK`. Завантажте образи окремо від запуску, щоб бачити, на якому образі виникає помилка:
+
+```bash
+sudo docker compose -f compose.yaml -f bootstrap/compose.https.yaml pull
+sudo docker compose -f compose.yaml -f bootstrap/compose.https.yaml up -d --wait --wait-timeout 900
+sudo docker compose -f compose.yaml -f bootstrap/compose.https.yaml ps -a
+```
+
+Якщо запуск зупинився, перегляньте стан і останні повідомлення проблемного сервісу. Наприклад, для Django:
+
+```bash
+sudo docker compose -f compose.yaml -f bootstrap/compose.https.yaml logs --tail=100 django
+```
+
+Для інших компонентів підставте ім’я зі списку `ps -a`, наприклад `db`, `geoserver` або `init-postgis`. Одноразові сервіси `init-postgis`, `geoserver-data` й `init-buckets` мають завершитися зі статусом `Exited (0)`.
+
+### 6.5. Увімкніть HTTPS у Nginx
+
+З кореня репозиторію встановіть сертифікат і згенеруйте конфігурацію з наявних шаблонів. Для чинної інсталяції збережіть копію активної конфігурації та TLS-файлів перед їх заміною.
+
+```bash
+sudo install -d -m 0700 /etc/nginx/sd-lab-tls
+sudo install -m 0644 "$TLS_DIR/fullchain.pem" /etc/nginx/sd-lab-tls/fullchain.pem
+sudo install -m 0600 "$TLS_DIR/privkey.pem" /etc/nginx/sd-lab-tls/privkey.pem
+sudo install -m 0644 bootstrap/nginx-proxy.conf /etc/nginx/snippets/sd-lab-proxy.conf
+sed "s/@DOMAIN@/sd.xenon.local/g" bootstrap/index.html.in |
+  sudo tee /etc/nginx/sd-lab-index.html >/dev/null
+sed -e "s/@DOMAIN@/sd.xenon.local/g" -e "s/@IP@/$VM_IP/g" bootstrap/nginx.conf.in |
+  sudo tee /etc/nginx/sites-available/sd-lab.conf >/dev/null
+sudo ln -sfn /etc/nginx/sites-available/sd-lab.conf /etc/nginx/sites-enabled/sd-lab.conf
+sudo nginx -t
+```
+
+Очікуваний результат — `syntax is ok` і `test is successful`. Якщо перевірка пройшла, застосуйте конфігурацію та перевірте HTTPS напряму за IP, зберігаючи перевірку домену й сертифіката:
+
+```bash
+sudo systemctl enable --now nginx
+sudo systemctl reload nginx
+curl -fsS --resolve "sd.xenon.local:443:$VM_IP" https://sd.xenon.local/sd-lab/ -o /dev/null
+```
+
+Якщо Nginx не стартує, перегляньте `sudo journalctl -u nginx -n 100 --no-pager`. Якщо перевірка через `--resolve` працює, а звичайний URL з клієнта ні, перевірте локальний DNS і довіру клієнта до CA. Для поновлення сертифіката передайте нові файли за кроком 5 і повторіть 6.5. Якщо змінився CA, спочатку оновіть довіру на VM за кроком 6.4 і на клієнтах за кроком 7.
+
+Якщо переносите наявні дані GeoNode, зробіть резервну копію до запуску. Після переходу замініть старий origin, підставивши фактичну попередню адресу:
+
+```bash
+cd /opt/spatial-data-lab
+sudo docker compose -f compose.yaml -f bootstrap/compose.https.yaml exec -T django \
+  python manage.py migrate_baseurl --force \
   --source-address http://localhost:8088 --target-address https://sd.xenon.local
 ```
 
-## 5. Налаштуйте клієнтів і перевірте доступ
+## 7. Налаштуйте клієнтів і перевірте доступ
 
 Розгорніть кореневий CA на клієнтах через GPO або налаштуйте окрему машину з Windows 10, 11 чи Server 2019 у PowerShell від адміністратора:
 
@@ -83,6 +294,20 @@ Get-NetAdapter
   -ZoneName sd.xenon.local -RootCA 'C:\TLS\root-ca.crt'
 ```
 
-Підставте індекс активного адаптера. Відкрийте `https://sd.xenon.local/sd-lab/` і перевірте стан сервісів, сертифікат та вхід у GeoNode і GeoServer. Prometheus і Alertmanager відкриті для читання. Grafana потребує облікового запису з роллю Viewer, а консоль RustFS і приватні бакети — облікових даних RustFS.
+Підставте індекс активного адаптера зі стовпця `ifIndex`. На клієнтах, які вже використовують робочий локальний DNS, достатньо розгорнути довіру до CA через GPO. Відкрийте `https://sd.xenon.local/sd-lab/` і перевірте стан сервісів, сертифікат та вхід у GeoNode і GeoServer. Prometheus і Alertmanager відкриті для читання. Grafana потребує облікового запису з роллю Viewer, а консоль RustFS і приватні бакети — облікових даних RustFS.
 
-Стан контейнерів перевіряйте через `sudo /opt/spatial-data-lab/bootstrap/compose-lan.sh ps`. Для тестових тайлів перейдіть у `/opt/spatial-data-lab` і виконайте `sudo sh scripts/seed-tiles.sh`.
+Для перевірки контейнерів або створення тестових тайлів виконайте на Ubuntu:
+
+```bash
+cd /opt/spatial-data-lab
+sudo docker compose -f compose.yaml -f bootstrap/compose.https.yaml ps
+sudo sh scripts/seed-tiles.sh
+```
+
+
+### Які файли використовує інструкція
+
+- `New-SdLabTls.ps1` готує TLS-файли. `Copy-SdLabTlsToVm.ps1` передає їх на Ubuntu.
+- `Set-SdLabDnsServer.ps1` додає DNS-записи. `Set-SdLabDnsClient.ps1` налаштовує DNS і довіру до CA на окремому клієнті.
+- `compose.https.yaml`, `django-https.py`, `geonode-nginx.conf`, `nginx-proxy.conf`, `nginx.conf.in` та `index.html.in` застосовуються командами з кроку 6.
+- `setup-ubuntu.sh` і `compose-lan.sh` залишені для наявних інсталяцій, де використовується `/etc/sd-lab/lan.env`. Для ручного розгортання використовуйте команди цього README.
